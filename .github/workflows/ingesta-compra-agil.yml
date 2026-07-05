@@ -1,0 +1,27 @@
+name: ingesta-compra-agil
+
+on:
+  schedule:
+    - cron: '0 0,11,17 * * *'   # ~20:00 / 07:00 / 13:00 Chile (invierno UTC-4)
+  workflow_dispatch: {}
+
+concurrency:
+  group: ingesta-compra-agil
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      MP_TICKET_V1:              ${{ secrets.MP_TICKET_V1 }}
+      MP_TICKET_V2:              ${{ secrets.MP_TICKET_V2 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run ingesta:compra-agil
