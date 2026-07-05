@@ -1,0 +1,16 @@
+{
+  "name": "licitaflix-ingesta",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "ingesta:compra-agil": "node ingest/compra-agil.mjs",
+    "ingesta:licitaciones": "node ingest/licitaciones.mjs",
+    "ingesta:oc-datos-abiertos": "node ingest/oc-datos-abiertos.mjs",
+    "ingesta:ordenes-compra": "node ingest/ordenes-compra.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.3",
+    "csv-parse": "^7.0.0"
+  }
+}

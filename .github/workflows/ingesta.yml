@@ -1,0 +1,32 @@
+name: ingesta-mercadopublico
+
+on:
+  schedule:
+    - cron: '0 11 * * *'   # ~07:00 Chile (invierno UTC-4). Ajustar en verano.
+    - cron: '0 17 * * *'   # ~13:00 Chile
+    - cron: '0 0 * * *'    # ~20:00 Chile
+  workflow_dispatch: {}
+
+concurrency:
+  group: ingesta
+  cancel-in-progress: false
+
+jobs:
+  ingesta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      MP_TICKET_V1:              ${{ secrets.MP_TICKET_V1 }}
+      MP_TICKET_V2:              ${{ secrets.MP_TICKET_V2 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Compra Ágil (v2, incremental)
+        run: npm run ingesta:compra-agil
+      - name: Licitaciones (v1, listado + detalle)
+        run: npm run ingesta:licitaciones

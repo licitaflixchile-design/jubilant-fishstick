@@ -1,0 +1,31 @@
+name: ingesta-oc-datos-abiertos
+
+on:
+  schedule:
+    - cron: '30 9 * * *'   # ~05:30 Chile: refresca el mes en curso
+  workflow_dispatch:
+    inputs:
+      meses:
+        description: 'Meses a procesar, ej: 2026-1,2026-2 (vacío = mes actual)'
+        required: false
+        default: ''
+
+concurrency:
+  group: ingesta-oc-da
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      OC_DA_MESES:               ${{ github.event.inputs.meses }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run ingesta:oc-datos-abiertos
