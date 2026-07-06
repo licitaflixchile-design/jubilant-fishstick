@@ -1,0 +1,33 @@
+name: ingesta-bip
+
+# BIP (Banco Integrado de Proyectos) desde datos abiertos BIDAT/MDS.
+# El dataset se regenera trimestralmente → corrida semanal sobra.
+on:
+  schedule:
+    - cron: '0 7 * * 1'   # lunes ~03:00 Chile
+  workflow_dispatch:
+    inputs:
+      anos:
+        description: 'Años a cargar, ej: 2024,2025,2026 (vacío = año actual)'
+        required: false
+        default: ''
+
+concurrency:
+  group: ingesta-bip
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      BIP_ANOS:                  ${{ github.event.inputs.anos }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run ingesta:bip
