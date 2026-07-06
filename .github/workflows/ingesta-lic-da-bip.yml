@@ -1,0 +1,33 @@
+name: ingesta-lic-da-bip
+
+# Mapeo licitación→BIP desde los CSVs históricos lic-da (mensual: procesa
+# el mes anterior ya cerrado). Para backfill usar dispatch con meses.
+on:
+  schedule:
+    - cron: '0 8 5 * *'   # día 5 de cada mes, ~04:00 Chile
+  workflow_dispatch:
+    inputs:
+      meses:
+        description: 'Meses, ej: 2025-1,2025-2 (vacío = mes anterior)'
+        required: false
+        default: ''
+
+concurrency:
+  group: ingesta-lic-da-bip
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      LIC_DA_MESES:              ${{ github.event.inputs.meses }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run ingesta:lic-da-bip
