@@ -111,11 +111,11 @@ async function agregarMes(csvPath) {
     // Puente OC→licitación (trazabilidad BIP→licitación→OC).
     const codLic = (rec.CodigoLicitacion ?? '').trim();
     if (/^\d+-\d+-[A-Z0-9]+$/i.test(codLic)) {
+      // (sin proveedor_nombre: se obtiene por join a v_proveedores_consolidado)
       puente.push({
         codigo_oc: codigo,
         codigo_licitacion: codLic,
         proveedor_rut: rut,
-        proveedor_nombre: rec.NombreProveedor ?? null,
         monto_clp: monto,
         fecha_envio: rec.FechaEnvio || null,
       });

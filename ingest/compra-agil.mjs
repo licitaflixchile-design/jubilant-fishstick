@@ -39,7 +39,7 @@ function mapHeader(it) {
     motivo_cancelacion:   it.motivos?.motivo_cancelacion ?? null,
     motivo_desierta:      it.motivos?.motivo_desierta ?? null,
     motivo_seleccion:     it.motivos?.motivo_seleccion ?? null,
-    raw:                  it,
+    // raw eliminado (limpieza jul 2026): mapeo validado, columna dropeada
     last_seen:            now(),
   };
 }
@@ -56,7 +56,7 @@ function mapCotizacion(caCodigo, c) {
     monto_total:        c.monto_total ?? null,
     seleccionado:       c.seleccion?.proveedor_seleccionado ?? null,
     fecha_creacion:     c.fecha_creacion ?? null,
-    raw:                c,
+    // raw eliminado (limpieza jul 2026)
   };
 }
 

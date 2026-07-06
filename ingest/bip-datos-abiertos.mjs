@@ -61,7 +61,7 @@ function mapRow(r, ano) {
     ano_postula:      toInt(r.EBI_ANO_POSTULA) ?? ano,
     etapa_postula:    r.EBI_ETAPA_POSTULA ?? '',
     nombre:           r.EBI_NOMBRE ?? null,
-    descripcion:      r.EBI_DESCRIPCION ?? null,
+    // descripcion eliminada (limpieza jul 2026): columna dropeada por peso
     etapa_actual:     r.EBI_ETAPA_ACTUAL || null,
     reg_clave:        toInt(r.REG_CLAVE),
     rate:             r.EBI_RATE || null,
