@@ -38,13 +38,36 @@ export async function lastOkCursor(dataset) {
   return data?.cursor ?? null;
 }
 
-/** UPSERT en lotes (evita payloads gigantes). Devuelve filas afectadas. */
+/**
+ * Reintenta una operación de BD ante errores transitorios:
+ * 57014 = statement timeout (instancia chica bajo carga) · errores de red.
+ * op() debe devolver { error } estilo supabase-js.
+ */
+export async function withRetry(op, { retries = 4, label = 'db' } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const { error } = await op();
+      if (!error) return;
+      const transitorio = error.code === '57014' || /timeout|fetch failed/i.test(error.message ?? '');
+      if (!transitorio || attempt > retries) throw error;
+      const waitMs = attempt * 5000;
+      console.warn(`[${label}] ${error.code ?? ''} ${error.message} · retry ${attempt}/${retries} en ${waitMs / 1000}s`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    } catch (e) {
+      if (attempt > retries) throw e;
+      const transitorio = e?.code === '57014' || /timeout|fetch failed/i.test(e?.message ?? '');
+      if (!transitorio) throw e;
+      await new Promise((r) => setTimeout(r, attempt * 5000));
+    }
+  }
+}
+
+/** UPSERT en lotes con reintentos ante timeouts. Devuelve filas afectadas. */
 export async function upsertChunked(table, rows, conflict, chunk = 500) {
   let total = 0;
   for (let i = 0; i < rows.length; i += chunk) {
     const slice = rows.slice(i, i + chunk);
-    const { error } = await sb.from(table).upsert(slice, { onConflict: conflict });
-    if (error) throw error;
+    await withRetry(() => sb.from(table).upsert(slice, { onConflict: conflict }), { label: table });
     total += slice.length;
   }
   return total;

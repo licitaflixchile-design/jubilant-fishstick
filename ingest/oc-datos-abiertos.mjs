@@ -21,7 +21,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'csv-parse';
-import { sb, startRun, finishRun } from './lib/db.mjs';
+import { sb, startRun, finishRun, withRetry } from './lib/db.mjs';
 
 const BASE = 'https://transparenciachc.blob.core.windows.net/oc-da';
 const DRY = process.env.OC_DA_DRY === '1';
@@ -146,11 +146,10 @@ async function guardarMes(mes, provs) {
   }
 
   // El archivo mensual se regenera completo → reemplazo limpio del mes.
-  const { error: delErr } = await sb.from('oc_proveedor_mensual').delete().eq('mes', mesDate);
-  if (delErr) throw delErr;
+  await withRetry(() => sb.from('oc_proveedor_mensual').delete().eq('mes', mesDate), { label: 'oc_pm.delete' });
   for (let i = 0; i < rows.length; i += 500) {
-    const { error } = await sb.from('oc_proveedor_mensual').insert(rows.slice(i, i + 500));
-    if (error) throw error;
+    const slice = rows.slice(i, i + 500);
+    await withRetry(() => sb.from('oc_proveedor_mensual').insert(slice), { label: 'oc_pm.insert' });
   }
   return rows.length;
 }
@@ -164,11 +163,10 @@ async function guardarPuente(mes, puente) {
     console.log(`[oc-da] DRY ${mes}: ${rows.length} OC con origen licitación (no se escribe)`);
     return 0;
   }
-  const { error: delErr } = await sb.from('oc_por_licitacion').delete().eq('mes', mesDate);
-  if (delErr) throw delErr;
+  await withRetry(() => sb.from('oc_por_licitacion').delete().eq('mes', mesDate), { label: 'oc_lic.delete' });
   for (let i = 0; i < rows.length; i += 500) {
-    const { error } = await sb.from('oc_por_licitacion').upsert(rows.slice(i, i + 500), { onConflict: 'codigo_oc' });
-    if (error) throw error;
+    const slice = rows.slice(i, i + 500);
+    await withRetry(() => sb.from('oc_por_licitacion').upsert(slice, { onConflict: 'codigo_oc' }), { label: 'oc_lic.upsert' });
   }
   return rows.length;
 }
