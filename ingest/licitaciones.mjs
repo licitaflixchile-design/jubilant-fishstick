@@ -18,8 +18,20 @@ const REFRESH_DAYS = Number(process.env.LIC_REFRESH_DAYS ?? 3);
 
 const now = () => new Date().toISOString();
 
+// Código BIP de la licitación (opcional, solo obras/inversión). El campo
+// CodigoBIP trae basura de digitación a veces ("000000", "1"); si no es
+// válido, se intenta extraer del nombre/descripción ("...CODIGO BIP 40028006").
+function extraerCodigoBip(L) {
+  const campo = String(L.CodigoBIP ?? '').trim();
+  if (/^\d{7,8}$/.test(campo) && !/^(\d)\1+$/.test(campo)) return campo;
+  const texto = `${L.Nombre ?? ''} ${L.Descripcion ?? ''}`;
+  const m = texto.match(/BIP\D{0,10}(\d{7,8})/i);
+  return m ? m[1] : null;
+}
+
 function mapLicitacion(L) {
   return {
+    codigo_bip:         extraerCodigoBip(L),
     codigo_externo:     L.CodigoExterno,
     nombre:             L.Nombre ?? null,
     codigo_estado:      L.CodigoEstado ?? null,

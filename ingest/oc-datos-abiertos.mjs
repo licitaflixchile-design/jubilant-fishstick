@@ -72,6 +72,7 @@ async function agregarMes(csvPath) {
   // (rut) -> acumulador; dedup de OC por Codigo (primera aparición manda)
   const provs = new Map();
   const vistas = new Set();
+  const puente = [];   // OC con origen en licitación → oc_por_licitacion
   let filas = 0;
 
   const parser = createReadStream(csvPath, { encoding: 'latin1' }).pipe(parse({
@@ -106,8 +107,21 @@ async function agregarMes(csvPath) {
     p.contratos++; p.monto += monto;
     const m = modalidad(rec);
     if (p[m]) { p[m][0]++; p[m][1] += monto; }
+
+    // Puente OC→licitación (trazabilidad BIP→licitación→OC).
+    const codLic = (rec.CodigoLicitacion ?? '').trim();
+    if (/^\d+-\d+-[A-Z0-9]+$/i.test(codLic)) {
+      puente.push({
+        codigo_oc: codigo,
+        codigo_licitacion: codLic,
+        proveedor_rut: rut,
+        proveedor_nombre: rec.NombreProveedor ?? null,
+        monto_clp: monto,
+        fecha_envio: rec.FechaEnvio || null,
+      });
+    }
   }
-  return { provs, filas, ocs: vistas.size };
+  return { provs, filas, ocs: vistas.size, puente };
 }
 
 async function guardarMes(mes, provs) {
@@ -141,6 +155,24 @@ async function guardarMes(mes, provs) {
   return rows.length;
 }
 
+async function guardarPuente(mes, puente) {
+  const [y, m] = mes.split('-').map(Number);
+  const mesDate = `${y}-${String(m).padStart(2, '0')}-01`;
+  const rows = puente.map((r) => ({ ...r, mes: mesDate }));
+
+  if (DRY) {
+    console.log(`[oc-da] DRY ${mes}: ${rows.length} OC con origen licitación (no se escribe)`);
+    return 0;
+  }
+  const { error: delErr } = await sb.from('oc_por_licitacion').delete().eq('mes', mesDate);
+  if (delErr) throw delErr;
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await sb.from('oc_por_licitacion').upsert(rows.slice(i, i + 500), { onConflict: 'codigo_oc' });
+    if (error) throw error;
+  }
+  return rows.length;
+}
+
 async function main() {
   const meses = mesesObjetivo();
   console.log(`[oc-da] meses: ${meses.join(', ')}${DRY ? ' (DRY RUN)' : ''}`);
@@ -165,9 +197,10 @@ async function main() {
         }
         throw e;
       }
-      const { provs, filas, ocs } = await agregarMes(csvPath);
-      console.log(`[oc-da] ${mes}: ${filas.toLocaleString()} filas ítem · ${ocs.toLocaleString()} OC únicas · ${provs.size.toLocaleString()} proveedores`);
+      const { provs, filas, ocs, puente } = await agregarMes(csvPath);
+      console.log(`[oc-da] ${mes}: ${filas.toLocaleString()} filas ítem · ${ocs.toLocaleString()} OC únicas · ${provs.size.toLocaleString()} proveedores · ${puente.length.toLocaleString()} OC de licitación`);
       totalRows += await guardarMes(mes, provs);
+      totalRows += await guardarPuente(mes, puente);
     }
     if (runId) await finishRun(runId, { status: 'success', rows_upserted: totalRows, requests_made: requests, cursor: { meses, omitidos } });
     console.log(`[oc-da] OK · ${totalRows} filas agregadas${omitidos.length ? ` · omitidos: ${omitidos.join(',')}` : ''}`);
