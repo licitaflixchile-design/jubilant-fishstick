@@ -54,7 +54,9 @@ function mapCotizacion(caCodigo, c) {
     valor_neto:         c.valor_neto ?? null,
     total_impuesto:     c.total_impuesto ?? null,
     monto_total:        c.monto_total ?? null,
-    seleccionado:       c.seleccion?.proveedor_seleccionado ?? null,
+    // La API entrega proveedor_seleccionado como 0/1 al nivel de la cotización
+    // (validado jul 2026 contra 4939-249-COT26; NO viene anidado en `seleccion`).
+    seleccionado:       c.proveedor_seleccionado != null ? Boolean(Number(c.proveedor_seleccionado)) : null,
     fecha_creacion:     c.fecha_creacion ?? null,
     // raw eliminado (limpieza jul 2026)
   };
@@ -124,9 +126,10 @@ async function main() {
         .map((c) => mapCotizacion(codigo, c));
       if (cots.length) upserts += await upsertChunked('compra_agil_cotizaciones', cots, 'compra_agil_codigo,id_cotizacion');
 
+      // id_orden_compra viene en la RAÍZ del payload (validado jul 2026).
       await sb.from('compra_agil').update({
-        orden_compra_id: p.orden_compra?.id_orden_compra ?? null,
-        oc_codigo:       p.orden_compra?.codigo_orden_compra ?? null,
+        orden_compra_id: p.id_orden_compra ?? p.orden_compra?.id_orden_compra ?? null,
+        oc_codigo:       p.codigo_orden_compra ?? p.orden_compra?.codigo_orden_compra ?? null,
         last_detail_at:  now(),
       }).eq('codigo', codigo);
 

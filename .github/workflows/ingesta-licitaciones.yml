@@ -3,7 +3,12 @@ name: ingesta-licitaciones
 on:
   schedule:
     - cron: '0 5 * * *'   # ~01:00 Chile (nocturna; licitaciones tienen plazos de días)
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      adj_dias:
+        description: 'Días hacia atrás de adjudicadas a capturar (vacío = 3)'
+        required: false
+        default: ''
 
 # Grupo compartido para trabajos que usan la API v1 con el mismo ticket
 # (throttle 2s): no corren en simultáneo y no se pisan el rate limit.
@@ -19,6 +24,7 @@ jobs:
       SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       MP_TICKET_V1:              ${{ secrets.MP_TICKET_V1 }}
+      LIC_ADJ_DIAS:              ${{ github.event.inputs.adj_dias }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

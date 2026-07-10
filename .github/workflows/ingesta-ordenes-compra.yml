@@ -1,0 +1,42 @@
+name: ingesta-ordenes-compra
+
+# Headers diarios de OC por fecha (listado liviano: codigo/nombre/estado).
+# El detalle (proveedor/montos) se completa por otra vía — ver ordenes-compra.mjs.
+on:
+  schedule:
+    - cron: '0 9 * * *'   # ~05:00 Chile (invierno UTC-4)
+  workflow_dispatch:
+    inputs:
+      backfill_desde:
+        description: 'Backfill desde (YYYY-MM-DD, vacío = modo diario últimos 3 días)'
+        required: false
+        default: ''
+      backfill_hasta:
+        description: 'Backfill hasta (YYYY-MM-DD, vacío = hoy)'
+        required: false
+        default: ''
+
+# Mismo grupo que licitaciones: ambas usan la API v1 con el mismo ticket
+# (throttle 2s), así no corren en simultáneo y no se pisan el rate limit.
+concurrency:
+  group: ingesta-v1
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      MP_TICKET_V1:              ${{ secrets.MP_TICKET_V1 }}
+      MP_TICKET_V2:              ${{ secrets.MP_TICKET_V2 }}
+      OC_BACKFILL_DESDE:         ${{ github.event.inputs.backfill_desde }}
+      OC_BACKFILL_HASTA:         ${{ github.event.inputs.backfill_hasta }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run ingesta:ordenes-compra

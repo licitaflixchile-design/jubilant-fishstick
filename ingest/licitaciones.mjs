@@ -6,7 +6,7 @@
 //
 // ⚠ Guardamos SIEMPRE `raw` (JSONB). Validar los nombres de campo contra la
 //   primera respuesta real (la API v1 usa PascalCase) y ajustar si hace falta.
-import { fetchV1 } from './lib/mp.mjs';
+import { fetchV1, ddmmyyyy } from './lib/mp.mjs';
 import { sb, startRun, finishRun, upsertChunked } from './lib/db.mjs';
 
 // Mercado Público usa un mismo ticket para v1 y v2; aceptamos cualquiera de los dos.
@@ -15,6 +15,8 @@ if (!TICKET) throw new Error('Falta el ticket (MP_TICKET_V1 / MP_TICKET_V2)');
 
 const MAX_DETALLE  = Number(process.env.LIC_MAX_DETALLE ?? 1500);
 const REFRESH_DAYS = Number(process.env.LIC_REFRESH_DAYS ?? 3);
+const ADJ_DIAS     = Number(process.env.LIC_ADJ_DIAS || 3);          // días hacia atrás de adjudicadas ('' → 3)
+const MAX_ADJ_DET  = Number(process.env.LIC_MAX_ADJ_DETALLE || 900); // presupuesto de detalle para adjudicadas
 
 const now = () => new Date().toISOString();
 
@@ -142,13 +144,57 @@ async function main() {
       if ((i + 1) % 100 === 0) console.log(`[licitaciones] ${i + 1}/${objetivo.length}`);
     }
 
+    // ── 3) RESULTADOS: adjudicadas por fecha (el listado de activas nunca las
+    //    trae de vuelta — sin este paso las adjudicaciones quedaban en null).
+    //    licitaciones.json?fecha=ddmmyyyy&estado=adjudicada → detalle con
+    //    Items.Adjudicacion por línea. ~300/día a nivel nacional.
+    let adjDetalles = 0;
+    const adjCodigos = new Map(); // codigo -> CodigoEstado del listado
+    for (let d = 1; d <= ADJ_DIAS; d++) {
+      const fecha = new Date(Date.now() - d * 864e5);
+      try {
+        const j = await fetchV1('licitaciones.json', { fecha: ddmmyyyy(fecha), estado: 'adjudicada' }, TICKET);
+        requests++;
+        for (const l of (j?.Listado ?? [])) {
+          if (l.CodigoExterno) adjCodigos.set(l.CodigoExterno, l.CodigoEstado ?? 8);
+        }
+      } catch (e) {
+        console.warn(`[licitaciones] adjudicadas ${ddmmyyyy(fecha)} error: ${e.message}`);
+      }
+    }
+
+    const adjExisting = await loadExisting([...adjCodigos.keys()]);
+    const adjPend = [...adjCodigos.entries()].filter(([codigo, estado]) => {
+      const ex = adjExisting.get(codigo);
+      // ya la detallamos DESPUÉS de adjudicada → no repetir
+      return !(ex && ex.codigo_estado === estado && ex.last_detail_at);
+    }).slice(0, MAX_ADJ_DET);
+    console.log(`[licitaciones] adjudicadas: ${adjCodigos.size} en ${ADJ_DIAS} días · detalle para ${adjPend.length}`);
+
+    for (const [i, [codigo]] of adjPend.entries()) {
+      try {
+        const det = await fetchV1('licitaciones.json', { codigo }, TICKET);
+        requests++;
+        const L = det?.Listado?.[0];
+        if (!L) continue;
+        await upsertChunked('licitaciones', [mapLicitacion(L)], 'codigo_externo');
+        const items = mapItems(codigo, L);
+        if (items.length) await upsertChunked('licitacion_items', items, 'licitacion_codigo,correlativo');
+        upserts += 1 + items.length;
+        adjDetalles++;
+      } catch (e) {
+        console.warn(`[licitaciones] adj ${codigo} error: ${e.message}`);
+      }
+      if ((i + 1) % 100 === 0) console.log(`[licitaciones] adj ${i + 1}/${adjPend.length}`);
+    }
+
     await finishRun(runId, {
       status: pendientes > 0 ? 'partial' : 'success',
       rows_upserted: upserts,
       requests_made: requests,
-      cursor: { activas: activas.length, pendientes },
+      cursor: { activas: activas.length, pendientes, adjudicadas: adjDetalles },
     });
-    console.log(`[licitaciones] OK · upserts=${upserts} requests=${requests} pendientes=${pendientes}`);
+    console.log(`[licitaciones] OK · upserts=${upserts} requests=${requests} pendientes=${pendientes} adjudicadas=${adjDetalles}`);
   } catch (err) {
     await finishRun(runId, { status: 'failed', rows_upserted: upserts, requests_made: requests, error_message: err.message });
     console.error(`[licitaciones] ERROR: ${err.message}`);

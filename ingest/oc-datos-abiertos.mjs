@@ -21,7 +21,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'csv-parse';
-import { sb, startRun, finishRun, withRetry } from './lib/db.mjs';
+import { sb, startRun, finishRun, withRetry, upsertChunked } from './lib/db.mjs';
 
 const BASE = 'https://transparenciachc.blob.core.windows.net/oc-da';
 const DRY = process.env.OC_DA_DRY === '1';
@@ -47,6 +47,9 @@ const parseMonto = (s) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+const fechaODA = (s) => (s && s !== 'NA' ? s : null);
+const texto    = (s) => (s && s !== 'NA' ? s : null);
+
 // Modalidad de una OC según los campos del dataset.
 function modalidad(rec) {
   const cm = rec.Codigo_ConvenioMarco;
@@ -68,11 +71,58 @@ async function descargarMes(mes, dir) {
   return join(dir, `${mes}.csv`);
 }
 
-async function agregarMes(csvPath) {
+// OC diarias (tabla ordenes_compra) que aún no tienen proveedor: el listado
+// v1 por fecha es liviano y este CSV trae el detalle completo → se cruzan
+// por código y se enriquecen (proveedor, montos, fechas, modalidad).
+async function cargarPendientesOC() {
+  const out = new Set();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb
+      .from('ordenes_compra')
+      .select('codigo')
+      .is('proveedor_rut', null)
+      .order('codigo')
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    for (const r of data ?? []) out.add(r.codigo);
+    if (!data || data.length < PAGE) break;
+  }
+  console.log(`[oc-da] OC diarias pendientes de enriquecer: ${out.size.toLocaleString()}`);
+  return out;
+}
+
+function mapEnriquecida(rec) {
+  return {
+    codigo:            rec.Codigo,
+    nombre:            texto(rec.Nombre),
+    codigo_estado:     rec.codigoEstado != null && rec.codigoEstado !== 'NA' ? Number(rec.codigoEstado) : null,
+    codigo_licitacion: texto(rec.CodigoLicitacion),
+    tipo:              texto(rec.Tipo),
+    tipo_moneda:       texto(rec.TipoMonedaOC),
+    modalidad:         modalidad(rec),
+    fecha_creacion:    fechaODA(rec.FechaCreacion),
+    fecha_envio:       fechaODA(rec.FechaEnvio),
+    fecha_aceptacion:  fechaODA(rec.FechaAceptacion),
+    total_neto:        parseMonto(rec.TotalNetoOC),
+    impuestos:         parseMonto(rec.Impuestos),
+    total:             parseMonto(rec.MontoTotalOC_PesosChilenos),
+    organismo_codigo:  texto(rec.CodigoOrganismoPublico),
+    organismo_nombre:  texto(rec.OrganismoPublico),
+    comprador_region:  texto(rec.RegionUnidadCompra),
+    proveedor_rut:     texto(rec.RutSucursal),
+    proveedor_nombre:  texto(rec.NombreProveedor),
+    proveedor_region:  texto(rec.RegionProveedor),
+    last_seen:         new Date().toISOString(),
+  };
+}
+
+async function agregarMes(csvPath, pendientes = new Set()) {
   // (rut) -> acumulador; dedup de OC por Codigo (primera aparición manda)
   const provs = new Map();
   const vistas = new Set();
-  const puente = [];   // OC con origen en licitación → oc_por_licitacion
+  const puente = [];      // OC con origen en licitación → oc_por_licitacion
+  const enriquecer = [];  // OC diarias livianas que este CSV completa
   let filas = 0;
 
   const parser = createReadStream(csvPath, { encoding: 'latin1' }).pipe(parse({
@@ -90,6 +140,13 @@ async function agregarMes(csvPath) {
     const rut = rec.RutSucursal;
     if (!codigo || !rut || vistas.has(codigo)) continue;
     vistas.add(codigo);
+
+    // Enriquecer la OC diaria liviana si existe (incluso canceladas: el
+    // codigo_estado actualizado permite excluirlas río abajo).
+    if (pendientes.has(codigo)) {
+      pendientes.delete(codigo);
+      enriquecer.push(mapEnriquecida(rec));
+    }
 
     // Excluir OC canceladas del agregado (no son negocio adjudicado)
     const estado = rec.Estado ?? '';
@@ -121,7 +178,7 @@ async function agregarMes(csvPath) {
       });
     }
   }
-  return { provs, filas, ocs: vistas.size, puente };
+  return { provs, filas, ocs: vistas.size, puente, enriquecer };
 }
 
 async function guardarMes(mes, provs) {
@@ -180,6 +237,7 @@ async function main() {
   try {
     const dir = mkdtempSync(join(tmpdir(), 'oc-da-'));
     const omitidos = [];
+    const pendientes = DRY ? new Set() : await cargarPendientesOC();
     for (const mes of meses) {
       let csvPath;
       try {
@@ -195,10 +253,18 @@ async function main() {
         }
         throw e;
       }
-      const { provs, filas, ocs, puente } = await agregarMes(csvPath);
-      console.log(`[oc-da] ${mes}: ${filas.toLocaleString()} filas ítem · ${ocs.toLocaleString()} OC únicas · ${provs.size.toLocaleString()} proveedores · ${puente.length.toLocaleString()} OC de licitación`);
+      const { provs, filas, ocs, puente, enriquecer } = await agregarMes(csvPath, pendientes);
+      console.log(`[oc-da] ${mes}: ${filas.toLocaleString()} filas ítem · ${ocs.toLocaleString()} OC únicas · ${provs.size.toLocaleString()} proveedores · ${puente.length.toLocaleString()} OC de licitación · ${enriquecer.length.toLocaleString()} OC diarias enriquecidas`);
       totalRows += await guardarMes(mes, provs);
       totalRows += await guardarPuente(mes, puente);
+      if (enriquecer.length && !DRY) {
+        try {
+          totalRows += await upsertChunked('ordenes_compra', enriquecer, 'codigo');
+        } catch (e) {
+          // p.ej. columna modalidad aún no creada: no botar el agregado mensual.
+          console.warn(`[oc-da] enriquecimiento falló (${e.message}); el agregado mensual ya quedó guardado`);
+        }
+      }
     }
     if (runId) await finishRun(runId, { status: 'success', rows_upserted: totalRows, requests_made: requests, cursor: { meses, omitidos } });
     console.log(`[oc-da] OK · ${totalRows} filas agregadas${omitidos.length ? ` · omitidos: ${omitidos.join(',')}` : ''}`);
