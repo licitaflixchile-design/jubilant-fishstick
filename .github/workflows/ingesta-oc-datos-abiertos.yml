@@ -9,6 +9,10 @@ on:
         description: 'Meses a procesar, ej: 2026-1,2026-2 (vacío = mes actual)'
         required: false
         default: ''
+      insertar_oc:
+        description: 'Carga histórica: "1" = upsertea TODAS las OC del mes en ordenes_compra (~145k/mes, solo en plan Pro)'
+        required: false
+        default: ''
 
 concurrency:
   group: ingesta-oc-da
@@ -22,6 +26,7 @@ jobs:
       SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       OC_DA_MESES:               ${{ github.event.inputs.meses }}
+      OC_DA_INSERT:              ${{ github.event.inputs.insertar_oc }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

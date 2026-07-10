@@ -7,6 +7,9 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 //   OC_DA_MESES=2026-1,2026-2   meses a procesar (def: mes actual; y si estamos
 //                               en los primeros 5 días, también el anterior)
+//   OC_DA_INSERT=1              CARGA HISTÓRICA: upsertea TODAS las OC del mes
+//                               en ordenes_compra (~145k/mes; solo en Pro —
+//                               en Free revienta el límite de 500MB)
 //   OC_DA_LOCAL_CSV=path        usar un CSV ya descargado (debug/test)
 //   OC_DA_DRY=1                 no escribe en BD, solo muestra stats
 //
@@ -25,6 +28,7 @@ import { sb, startRun, finishRun, withRetry, upsertChunked } from './lib/db.mjs'
 
 const BASE = 'https://transparenciachc.blob.core.windows.net/oc-da';
 const DRY = process.env.OC_DA_DRY === '1';
+const INSERTAR = process.env.OC_DA_INSERT === '1';
 
 function mesesObjetivo() {
   if (process.env.OC_DA_MESES) {
@@ -142,8 +146,11 @@ async function agregarMes(csvPath, pendientes = new Set()) {
     vistas.add(codigo);
 
     // Enriquecer la OC diaria liviana si existe (incluso canceladas: el
-    // codigo_estado actualizado permite excluirlas río abajo).
-    if (pendientes.has(codigo)) {
+    // codigo_estado actualizado permite excluirlas río abajo). En modo
+    // INSERTAR (carga histórica) se upsertea TODA OC del mes.
+    if (INSERTAR) {
+      enriquecer.push(mapEnriquecida(rec));
+    } else if (pendientes.has(codigo)) {
       pendientes.delete(codigo);
       enriquecer.push(mapEnriquecida(rec));
     }
@@ -237,7 +244,8 @@ async function main() {
   try {
     const dir = mkdtempSync(join(tmpdir(), 'oc-da-'));
     const omitidos = [];
-    const pendientes = DRY ? new Set() : await cargarPendientesOC();
+    if (INSERTAR) console.log('[oc-da] modo INSERTAR: se cargan TODAS las OC de los meses (carga histórica)');
+    const pendientes = (DRY || INSERTAR) ? new Set() : await cargarPendientesOC();
     for (const mes of meses) {
       let csvPath;
       try {
